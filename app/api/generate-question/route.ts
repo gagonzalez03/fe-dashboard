@@ -7,7 +7,7 @@ const client = new Anthropic({
 
 export async function POST(request: NextRequest) {
   try {
-    const { category, subtopic, questionType } = await request.json();
+    const { category, subtopic, questionType, quantity = 5 } = await request.json();
 
     if (!category || !subtopic || !questionType) {
       return NextResponse.json(
@@ -16,7 +16,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = `You are an expert FE Civil exam question generator. Generate a single ${questionType} question for the FE Civil CBT exam.
+    const questions = [];
+
+    for (let i = 0; i < quantity; i++) {
+      const prompt = `You are an expert FE Civil exam question generator. Generate a single ${questionType} question for the FE Civil CBT exam.
 
 Topic: ${category} - ${subtopic}
 
@@ -25,43 +28,55 @@ ${getTypeSpecificInstructions(questionType)}
 Return ONLY valid JSON (no markdown, no code blocks):
 ${getJsonTemplate(questionType)}`;
 
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    });
+      const message = await client.messages.create({
+        model: 'claude-sonnet-4-5-20250929',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ]
+      });
 
-    const text = message.content[0].type === 'text' ? message.content[0].text : '';
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    
-    if (!jsonMatch) {
+      const text = message.content[0].type === 'text' ? message.content[0].text : '';
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      
+      if (!jsonMatch) {
+        console.warn(`Failed to parse Claude response for question ${i + 1}`);
+        continue;
+      }
+
+      try {
+        const question = JSON.parse(jsonMatch[0]);
+        questions.push({
+          type: questionType,
+          ...question
+        });
+      } catch (parseError) {
+        console.warn(`Failed to parse JSON for question ${i + 1}:`, parseError);
+        continue;
+      }
+    }
+
+    if (questions.length === 0) {
       return NextResponse.json(
-        { success: false, error: 'Failed to parse Claude response' },
+        { success: false, error: 'Failed to generate any questions' },
         { status: 500 }
       );
     }
 
-    const question = JSON.parse(jsonMatch[0]);
-
     return NextResponse.json({ 
       success: true, 
-      question: {
-        type: questionType,
-        ...question
-      }
+      questions
     });
 
   } catch (error) {
-    console.error('Error generating question:', error);
+    console.error('Error generating questions:', error);
     return NextResponse.json(
       { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Failed to generate question'
+        error: error instanceof Error ? error.message : 'Failed to generate questions'
       },
       { status: 500 }
     );
