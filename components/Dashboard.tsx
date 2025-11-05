@@ -465,16 +465,17 @@ const ExerciseModal = ({ questions, subtopicTitle, onClose }) => {
 };
 
 // Generate Questions Section Component
-const GenerateQuestionsSection = ({ categoryKey, subtopic, initialQuestions, onExercise, onQuiz }) => {
+const GenerateQuestionsSection = ({ categoryKey, subtopic, generatedQuestions, setGeneratedQuestions, onExercise, onQuiz }) => {
   const [loading, setLoading] = React.useState(false);
-  const [generatedQuestions, setGeneratedQuestions] = React.useState(initialQuestions);
+  const subtopicKey = `${categoryKey}-${subtopic.id}`;
+  const currentQuestions = generatedQuestions[subtopicKey] || [];
 
   const handleGenerateQuestions = async () => {
     setLoading(true);
     try {
-      // Generate 2 sample questions
+      // Generate batch of questions
       const types = ['multiple-choice', 'fill-in-blank'];
-      const newQuestions = [...generatedQuestions];
+      const newQuestions = [...currentQuestions];
 
       for (const type of types) {
         const response = await fetch('/api/generate-question', {
@@ -483,28 +484,35 @@ const GenerateQuestionsSection = ({ categoryKey, subtopic, initialQuestions, onE
           body: JSON.stringify({
             category: categoryKey,
             subtopic: subtopic.title,
-            questionType: type
+            questionType: type,
+            quantity: 5
           })
         });
 
         if (response.ok) {
           const data = await response.json();
-          if (data.success && data.question) {
-            newQuestions.push({
-              id: Date.now() + Math.random(),
-              type: data.question.type,
-              text: data.question.text,
-              options: data.question.options,
-              correctAnswers: data.question.type === 'multiple-choice' 
-                ? new Set(data.question.correctAnswers)
-                : data.question.correctAnswers,
-              explanation: data.question.explanation
+          if (data.success && data.questions && Array.isArray(data.questions)) {
+            // Add all questions from the batch
+            data.questions.forEach((question) => {
+              newQuestions.push({
+                id: Date.now() + Math.random(),
+                type: question.type,
+                text: question.text,
+                options: question.options,
+                correctAnswers: question.type === 'multiple-choice' 
+                  ? new Set(question.correctAnswers)
+                  : question.correctAnswers,
+                explanation: question.explanation
+              });
             });
           }
         }
       }
 
-      setGeneratedQuestions(newQuestions);
+      setGeneratedQuestions(prev => ({
+        ...prev,
+        [subtopicKey]: newQuestions
+      }));
     } catch (error) {
       console.error('Error generating questions:', error);
     } finally {
@@ -514,7 +522,7 @@ const GenerateQuestionsSection = ({ categoryKey, subtopic, initialQuestions, onE
 
   return (
     <div className="p-4 bg-gray-800 bg-opacity-50 border-t border-gray-600 space-y-4">
-      {generatedQuestions.length > 0 ? (
+      {currentQuestions.length > 0 ? (
         <>
           {/* Analytics */}
           <div className="bg-gray-700 bg-opacity-40 p-4 rounded">
@@ -529,7 +537,7 @@ const GenerateQuestionsSection = ({ categoryKey, subtopic, initialQuestions, onE
               </div>
               <div className="bg-gray-600 bg-opacity-50 p-3 rounded">
                 <div className="text-gray-400 mb-1">Questions</div>
-                <div className="text-lg font-bold text-white">{generatedQuestions.length}</div>
+                <div className="text-lg font-bold text-white">{currentQuestions.length}</div>
               </div>
             </div>
           </div>
@@ -537,14 +545,14 @@ const GenerateQuestionsSection = ({ categoryKey, subtopic, initialQuestions, onE
           {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-3">
             <button
-              onClick={() => onExercise(generatedQuestions)}
+              onClick={() => onExercise(currentQuestions)}
               className="p-3 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-sm font-medium rounded transition-all flex items-center justify-center gap-2"
             >
               <BookOpen className="w-4 h-4" />
               Open Exercise
             </button>
             <button
-              onClick={() => onQuiz(generatedQuestions)}
+              onClick={() => onQuiz(currentQuestions)}
               className="p-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-sm font-medium rounded transition-all flex items-center justify-center gap-2"
             >
               <Clock className="w-4 h-4" />
@@ -601,7 +609,22 @@ export default function FECivilDashboard() {
   const [expandedSubtopics, setExpandedSubtopics] = useState({});
   const [activeExercise, setActiveExercise] = useState(null);
   const [activeQuiz, setActiveQuiz] = useState(null);
-  const [generatedQuestionsBySubtopic, setGeneratedQuestionsBySubtopic] = useState({});
+  
+  // Load questions from localStorage on mount
+  const [generatedQuestionsBySubtopic, setGeneratedQuestionsBySubtopic] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('fe-questions');
+      return saved ? JSON.parse(saved) : {};
+    }
+    return {};
+  });
+
+  // Save to localStorage whenever questions change
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fe-questions', JSON.stringify(generatedQuestionsBySubtopic));
+    }
+  }, [generatedQuestionsBySubtopic]);
 
   // Sample Questions
   const exerciseData = {
@@ -939,7 +962,8 @@ export default function FECivilDashboard() {
                             <GenerateQuestionsSection 
                               categoryKey={key}
                               subtopic={subtopic}
-                              initialQuestions={questions}
+                              generatedQuestions={generatedQuestionsBySubtopic}
+                              setGeneratedQuestions={setGeneratedQuestionsBySubtopic}
                               onExercise={(qs) => setActiveExercise({ questions: qs, subtopicTitle: subtopic.title })}
                               onQuiz={(qs) => setActiveQuiz({ questions: qs, subtopicTitle: subtopic.title })}
                             />
